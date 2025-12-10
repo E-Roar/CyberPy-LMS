@@ -1,0 +1,7 @@
+{
+  "name": "CyberPy LMS",
+  "description": "A white-label, responsive PWA for teaching Python with a sci-fi HUD / glass UI aesthetic.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}

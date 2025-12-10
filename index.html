@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CyberPy LMS</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Fonts: Orbitron (Headers), Inter (Body), JetBrains Mono (Code) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&family=Orbitron:wght@400;500;700;900&display=swap" rel="stylesheet">
+
+    <style>
+      :root {
+        --bg-1: #0f1220;
+        --bg-2: #11131a;
+        --glass-1: rgba(255,255,255,0.06);
+        --glass-2: rgba(255,255,255,0.04);
+        --glass-border: rgba(255,255,255,0.12);
+        --accent-cyan: #6bf3ff;
+        --accent-blue: #6c9cff;
+        --accent-pink: #ff7ac6;
+        --text-muted: #b9c0cf;
+      }
+
+      body {
+        background-color: var(--bg-1);
+        color: white;
+        font-family: 'Inter', sans-serif;
+        overflow: hidden; /* App handles scrolling */
+      }
+
+      h1, h2, h3, h4, h5, h6, .hud-font {
+        font-family: 'Orbitron', sans-serif;
+      }
+
+      .code-font {
+        font-family: 'JetBrains Mono', monospace;
+      }
+
+      /* Custom Scrollbar for Webkit */
+      ::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.2);
+        border-radius: 3px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: var(--accent-cyan);
+      }
+
+      /* Scanline Effect */
+      .scanlines {
+        background: linear-gradient(
+          to bottom,
+          rgba(255,255,255,0),
+          rgba(255,255,255,0) 50%,
+          rgba(0,0,0,0.2) 50%,
+          rgba(0,0,0,0.2)
+        );
+        background-size: 100% 4px;
+        position: fixed;
+        pointer-events: none;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 9999;
+        opacity: 0.15;
+      }
+
+      /* Glitch Animations */
+      @keyframes glitch-anim-1 {
+        0% { clip-path: inset(20% 0 80% 0); transform: translate(-2px, 1px); }
+        20% { clip-path: inset(60% 0 10% 0); transform: translate(2px, -1px); }
+        40% { clip-path: inset(40% 0 50% 0); transform: translate(-2px, 2px); }
+        60% { clip-path: inset(80% 0 5% 0); transform: translate(2px, -2px); }
+        80% { clip-path: inset(10% 0 70% 0); transform: translate(-1px, 1px); }
+        100% { clip-path: inset(30% 0 50% 0); transform: translate(1px, -1px); }
+      }
+
+      .glitch-hover:hover {
+        animation: glitch-anim-1 0.3s infinite linear alternate-reverse;
+        text-shadow: 2px 0 var(--accent-cyan), -2px 0 var(--accent-pink);
+      }
+      
+      /* Glass Utility */
+      .glass-panel {
+        background: var(--glass-1);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid var(--glass-border);
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "lucide-react": "https://esm.sh/lucide-react@^0.559.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.1/",
+    "react/": "https://esm.sh/react@^19.2.1/",
+    "react": "https://esm.sh/react@^19.2.1"
+  }
+}
+</script>
+</head>
+  <body>
+    <div id="root"></div>
+    <div class="scanlines"></div>
+  </body>
+</html>
