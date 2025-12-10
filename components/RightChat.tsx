@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { ChatMessage } from '../types';
 import { HudCard } from './UI';
+import { useTerminal } from '../context/TerminalContext';
 
 export const RightChat: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -17,6 +18,9 @@ export const RightChat: React.FC = () => {
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  
+  // Terminal Context to push "Thinking" logs
+  const { log, toggleTerminal, showAI } = useTerminal();
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -24,7 +28,25 @@ export const RightChat: React.FC = () => {
 
   useEffect(scrollToBottom, [messages]);
 
-  const handleSend = (text: string = input) => {
+  const simulateThinking = async () => {
+    // Make sure the Neural Link terminal is visible for the effect
+    if (!showAI) toggleTerminal('ai');
+
+    const steps = [
+      "Analyzing user query vector...",
+      "Querying Knowledge Graph (Code_Patterns_v4)...",
+      "Context retrieved: 'Python Loops & Indentation'",
+      "Formulating pedagogical response...",
+      "Sanitizing output..."
+    ];
+
+    for (const step of steps) {
+      log('ai', step);
+      await new Promise(r => setTimeout(r, 200 + Math.random() * 300));
+    }
+  };
+
+  const handleSend = async (text: string = input) => {
     if (!text.trim()) return;
 
     const newMessage: ChatMessage = {
@@ -37,6 +59,9 @@ export const RightChat: React.FC = () => {
     setMessages(prev => [...prev, newMessage]);
     setInput('');
     setIsTyping(true);
+    
+    // Trigger Verbose Logs
+    await simulateThinking();
 
     // Simulate Bot Response
     setTimeout(() => {
@@ -47,7 +72,8 @@ export const RightChat: React.FC = () => {
         timestamp: new Date()
       }]);
       setIsTyping(false);
-    }, 1500);
+      log('ai', "Response delivered.");
+    }, 500);
   };
 
   const QuickPrompt = ({ text }: { text: string }) => (
@@ -115,7 +141,6 @@ export const RightChat: React.FC = () => {
                 : 'bg-white/5 text-slate-300 border border-white/10 rounded-tl-sm'}
             `}>
               {msg.text}
-              {/* Message tail decoration */}
               <div className={`absolute top-0 w-2 h-2 border-t ${msg.sender === 'user' ? '-right-[1px] border-r border-cyan-500/30' : '-left-[1px] border-l border-white/10'}`}></div>
             </div>
             <span className="text-[10px] text-slate-600 mt-1 px-1">
