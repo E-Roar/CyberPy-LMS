@@ -93,30 +93,30 @@ export const CenterIDE: React.FC = () => {
     if (!active) return null;
 
     return (
-      <div className={`flex-1 flex flex-col min-w-[200px] border-r border-white/10 last:border-r-0 bg-[#0a0c14]/90 backdrop-blur-xl transition-all duration-300`}>
+      <div className={`flex-1 flex flex-col min-w-[200px] border-r border-[var(--border-color)] last:border-r-0 bg-[var(--bg-panel)]/90 backdrop-blur-xl transition-all duration-300`}>
         {/* Pane Header */}
-        <div className="h-8 bg-white/5 border-b border-white/10 flex items-center justify-between px-3 select-none">
+        <div className="h-8 bg-[var(--bg-surface)] border-b border-[var(--border-color)] flex items-center justify-between px-3 select-none">
           <div className={`flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest ${colorClass}`}>
             <Icon size={12} />
             {title}
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => clear(type)} className="text-slate-600 hover:text-white transition-colors" title="Clear">
+            <button onClick={() => clear(type)} className="text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] transition-colors" title="Clear">
               <RotateCcw size={12} />
             </button>
-            <button onClick={onToggle} className="text-slate-600 hover:text-white transition-colors" title="Minimize">
+            <button onClick={onToggle} className="text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] transition-colors" title="Minimize">
               <Minimize2 size={12} />
             </button>
           </div>
         </div>
         {/* Pane Content */}
-        <div className="flex-1 p-3 overflow-y-auto font-mono text-xs custom-scrollbar bg-black/40 shadow-inner">
+        <div className="flex-1 p-3 overflow-y-auto font-mono text-xs custom-scrollbar bg-[var(--bg-secondary)] shadow-inner">
            {/* Scanline background for terminals */}
            <div className="absolute inset-0 pointer-events-none opacity-[0.03] bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] z-0 bg-[length:100%_2px,3px_100%]"></div>
            
            <div className="relative z-10">
               {logs.map((line, idx) => (
-                <div key={idx} className={`mb-1 whitespace-pre-wrap break-all ${line.toLowerCase().includes('error') ? 'text-pink-500' : 'text-slate-300'}`}>
+                <div key={idx} className={`mb-1 whitespace-pre-wrap break-all ${line.toLowerCase().includes('error') ? 'text-pink-500' : 'text-[var(--fg-secondary)]'}`}>
                   <span className="opacity-30 mr-2 select-none">{idx+1}</span>
                   {line}
                 </div>
@@ -135,8 +135,8 @@ export const CenterIDE: React.FC = () => {
       className={`
         flex items-center gap-2 px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition-all border-t-2
         ${active 
-          ? `bg-[#0a0c14] text-white border-${color}-500 shadow-[0_-5px_15px_rgba(0,0,0,0.3)]` 
-          : 'bg-[#0f1220] text-slate-500 border-transparent hover:text-slate-300 hover:bg-white/5'}
+          ? `bg-[var(--bg-panel)] text-[var(--fg-primary)] border-${color}-500 shadow-[0_-5px_15px_rgba(0,0,0,0.1)]` 
+          : 'bg-[var(--bg-surface)] text-[var(--fg-secondary)] border-transparent hover:text-[var(--fg-primary)] hover:bg-[var(--border-color)]'}
       `}
     >
       <Icon size={14} className={active ? `text-${color}-400` : ''} />
@@ -145,34 +145,34 @@ export const CenterIDE: React.FC = () => {
   );
 
   return (
-    <div className="h-full flex flex-col relative overflow-hidden bg-[#11131a]">
+    <div className="h-full flex flex-col relative overflow-hidden bg-[var(--bg-surface)]">
       {/* Top Bar / Actions */}
-      <header className="h-16 border-b border-white/10 flex items-center justify-between px-6 bg-[#0f1220]/80 backdrop-blur-sm z-20">
+      <header className="h-16 border-b border-[var(--border-color)] flex items-center justify-between px-6 bg-[var(--glass-bg)] backdrop-blur-sm z-20">
         <div className="flex items-center gap-4">
-          <div className="text-slate-400 text-sm">Modules <span className="mx-1 text-slate-600">/</span> <span className="text-white font-medium">Intro to Python</span></div>
+          <div className="text-[var(--fg-secondary)] text-sm">Modules <span className="mx-1 text-[var(--border-color)]">/</span> <span className="text-[var(--fg-primary)] font-medium">Intro to Python</span></div>
         </div>
 
         <div className="flex items-center gap-3">
-           <div className="flex bg-[#0a0c14] rounded-lg p-1 border border-white/10 relative">
+           <div className="flex bg-[var(--bg-panel)] rounded-lg p-1 border border-[var(--border-color)] relative">
              <button 
                onClick={() => setViewMode('blocks')}
-               className={`relative z-10 px-3 py-1.5 rounded-md flex items-center gap-2 text-xs font-medium uppercase tracking-wide transition-all ${viewMode === 'blocks' ? 'text-cyan-400 bg-cyan-900/30 shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
+               className={`relative z-10 px-3 py-1.5 rounded-md flex items-center gap-2 text-xs font-medium uppercase tracking-wide transition-all ${viewMode === 'blocks' ? 'text-[var(--accent-primary)] bg-[var(--accent-primary)]/10 shadow-sm' : 'text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]'}`}
              >
                <Blocks size={16} />
                Blocks
              </button>
              <button 
                onClick={() => setViewMode('text')}
-               className={`relative z-10 px-3 py-1.5 rounded-md flex items-center gap-2 text-xs font-medium uppercase tracking-wide transition-all ${viewMode === 'text' ? 'text-cyan-400 bg-cyan-900/30 shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
+               className={`relative z-10 px-3 py-1.5 rounded-md flex items-center gap-2 text-xs font-medium uppercase tracking-wide transition-all ${viewMode === 'text' ? 'text-[var(--accent-primary)] bg-[var(--accent-primary)]/10 shadow-sm' : 'text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]'}`}
              >
                <Code2 size={16} />
                Text
              </button>
            </div>
            
-           <div className="w-px h-6 bg-white/10 mx-1"></div>
+           <div className="w-px h-6 bg-[var(--border-color)] mx-1"></div>
            
-           <button onClick={handleReset} className="p-2 text-slate-500 hover:text-pink-500 transition-colors" title="Reset">
+           <button onClick={handleReset} className="p-2 text-[var(--fg-secondary)] hover:text-pink-500 transition-colors" title="Reset">
              <Trash2 size={18} />
            </button>
 
@@ -193,7 +193,7 @@ export const CenterIDE: React.FC = () => {
 
       {/* Main Editor Area */}
       <main className="flex-1 relative overflow-hidden p-1 flex flex-col">
-        <div className="flex-1 bg-[#0a0c14] m-2 rounded-xl border border-white/10 overflow-hidden flex flex-col relative z-10">
+        <div className="flex-1 bg-[var(--bg-panel)] m-2 rounded-xl border border-[var(--border-color)] overflow-hidden flex flex-col relative z-10">
           <BlockPyWrapper 
             ref={blockPyRef}
             viewMode={viewMode}
@@ -205,7 +205,7 @@ export const CenterIDE: React.FC = () => {
         {/* Terminal Dock Area */}
         <div className="flex flex-col mx-2 mb-2 z-20 shadow-2xl">
            {/* Dock Tabs */}
-           <div className="flex items-end gap-1 px-2 border-b border-white/10 bg-[#0f1220]">
+           <div className="flex items-end gap-1 px-2 border-b border-[var(--border-color)] bg-[var(--glass-bg)]">
              <DockToggle type="user" label="Console" icon={TerminalIcon} active={showUser} color="cyan" />
              <DockToggle type="system" label="System" icon={Cpu} active={showSystem} color="amber" />
              <DockToggle type="ai" label="Neural Link" icon={Activity} active={showAI} color="pink" />
@@ -214,7 +214,7 @@ export const CenterIDE: React.FC = () => {
 
            {/* Dock Content (Split Pane) */}
            {(showUser || showSystem || showAI) && (
-             <div className="h-[200px] flex border border-white/10 border-t-0 rounded-b-xl overflow-hidden bg-[#0a0c14]">
+             <div className="h-[200px] flex border border-[var(--border-color)] border-t-0 rounded-b-xl overflow-hidden bg-[var(--bg-panel)]">
                <TerminalPane 
                  type="user" 
                  title="User Console" 

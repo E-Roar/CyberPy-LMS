@@ -1,10 +1,16 @@
-export interface User {
-  id: string;
-  name: string;
-  role: 'student' | 'teacher' | 'admin';
+
+export type UserRole = 'student' | 'teacher' | 'admin';
+
+export interface Profile {
+  id: string; // References auth.users id
+  username: string | null;
+  full_name: string | null;
+  avatar_url: string | null;
+  role: UserRole;
   xp: number;
   level: number;
-  avatarUrl: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ChatMessage {

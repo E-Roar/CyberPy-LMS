@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react';
 import { useTerminal } from '../context/TerminalContext';
+import { useTheme } from '../context/ThemeContext';
 
 // Global type augmentations
 declare global {
@@ -7,6 +8,7 @@ declare global {
     Blockly: any;
     Sk: any;
     lastClickedCategory?: string | null;
+    __loadedScripts?: Set<string>;
   }
 }
 
@@ -20,7 +22,7 @@ interface BlockPyWrapperProps {
   initialCode?: string;
   viewMode: 'blocks' | 'text';
   onCodeChange?: (code: string) => void;
-  onOutput?: (output: string) => void; // For User Terminal
+  onOutput?: (output: string) => void;
   onError?: (error: string) => void;
 }
 
@@ -32,6 +34,7 @@ export const BlockPyWrapper = forwardRef<BlockPyRef, BlockPyWrapperProps>(({
   onError
 }, ref) => {
   const { log } = useTerminal();
+  const { theme } = useTheme(); 
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const workspaceRef = useRef<any>(null);
@@ -39,76 +42,162 @@ export const BlockPyWrapper = forwardRef<BlockPyRef, BlockPyWrapperProps>(({
   const [libsLoaded, setLibsLoaded] = useState(false);
   const [code, setCode] = useState(initialCode);
 
-  // 1. Optimized Parallel Loading of External Libraries
+  // 1. Optimized Parallel Loading with Deduping
   useEffect(() => {
-    if (window.Blockly && window.Sk) {
+    // If libraries are already fully loaded and available in global scope
+    if (window.Blockly && window.Sk && window.Blockly.Blocks) {
       setLibsLoaded(true);
       return;
     }
 
-    log('system', 'Initiating parallel resource fetch...');
-    const startTime = performance.now();
-
-    const loadScript = (src: string) => {
+    // Deduping helper to prevent double-injection in React StrictMode or HMR
+    // Uses element IDs for absolute certainty
+    const loadScript = (src: string, id: string) => {
+      // Initialize global script registry if not present
+      if (!window.__loadedScripts) window.__loadedScripts = new Set();
+      
       return new Promise<void>((resolve, reject) => {
+        // 1. Check Global Registry (Memory)
+        if (window.__loadedScripts?.has(src)) {
+            const globalKey = `__promise_script_${src}`;
+            if ((window as any)[globalKey]) {
+                (window as any)[globalKey].then(resolve, reject);
+            } else {
+                resolve();
+            }
+            return;
+        }
+
+        // 2. Check DOM by ID (Source of Truth)
+        if (document.getElementById(id)) {
+          window.__loadedScripts?.add(src); // Sync registry
+          const globalKey = `__promise_script_${src}`;
+          if ((window as any)[globalKey]) {
+            (window as any)[globalKey].then(resolve, reject);
+            return;
+          }
+          resolve();
+          return;
+        }
+
+        // 3. Load Script
+        window.__loadedScripts?.add(src);
+
         const s = document.createElement('script');
         s.src = src;
+        s.id = id;
         s.async = true;
-        s.crossOrigin = "anonymous"; 
-        s.onload = () => resolve();
-        s.onerror = () => reject(new Error(`Failed to load ${src}`));
+        s.crossOrigin = "anonymous";
+        
+        const promise = new Promise<void>((res, rej) => {
+          s.onload = () => res();
+          s.onerror = () => rej(new Error(`Failed to load ${src}`));
+        });
+
+        (window as any)[`__promise_script_${src}`] = promise;
+
         document.body.appendChild(s);
+        promise.then(resolve, reject);
       });
     };
 
-    // Chain 1: Blockly Core -> Dependencies
+    log('system', 'Initiating resource fetch...');
+    const startTime = performance.now();
+
     const loadBlocklyChain = async () => {
-        await loadScript('https://unpkg.com/blockly/blockly.min.js');
-        log('system', 'Blockly Core loaded.');
-        await Promise.all([
-          loadScript('https://unpkg.com/blockly/python_compressed.js'),
-          loadScript('https://unpkg.com/blockly/blocks_compressed.js'),
-          loadScript('https://unpkg.com/blockly/msg/en.js'),
-        ]);
-        log('system', 'Blockly dependencies loaded.');
+        // Double-check existence inside async flow to prevent race conditions
+        if (window.Blockly && window.Blockly.Blocks) {
+             return; 
+        }
+
+        try {
+          await loadScript('https://unpkg.com/blockly/blockly.min.js', 'script-blockly-core');
+          await Promise.all([
+            loadScript('https://unpkg.com/blockly/python_compressed.js', 'script-blockly-python'),
+            loadScript('https://unpkg.com/blockly/blocks_compressed.js', 'script-blockly-blocks'),
+            loadScript('https://unpkg.com/blockly/msg/en.js', 'script-blockly-lang'),
+          ]);
+          log('system', 'Blockly Core & Deps loaded.');
+        } catch (e) {
+          console.error("Blockly Load Error:", e);
+          throw e;
+        }
     };
 
-    // Chain 2: Skulpt Core -> StdLib (Independent of Blockly)
     const loadSkulptChain = async () => {
-        await loadScript('https://skulpt.org/js/skulpt.min.js');
+        if (window.Sk) return;
+
+        await loadScript('https://skulpt.org/js/skulpt.min.js', 'script-skulpt-core');
+        await loadScript('https://skulpt.org/js/skulpt-stdlib.js', 'script-skulpt-stdlib');
         log('system', 'Skulpt Engine loaded.');
-        await loadScript('https://skulpt.org/js/skulpt-stdlib.js');
-        log('system', 'Python Standard Library loaded.');
     };
 
-    // Execute both chains in parallel
     Promise.all([loadBlocklyChain(), loadSkulptChain()])
       .then(() => {
         const duration = (performance.now() - startTime).toFixed(2);
-        log('system', `All systems ready in ${duration}ms.`);
+        log('system', `Systems ready in ${duration}ms.`);
         setLibsLoaded(true);
       }).catch(err => {
         console.error("Failed to load dependencies", err);
-        log('system', `CRITICAL ERROR: ${err.message}`);
-        if(onError) onError("System Error: Failed to load execution engine.");
+        // Even if load failed, check if objects exist (maybe partial load or cached)
+        if (window.Blockly && window.Sk) {
+             setLibsLoaded(true);
+        } else {
+             log('system', `CRITICAL ERROR: ${err.message}`);
+             if(onError) onError("System Error: Failed to load execution engine.");
+        }
       });
   }, []);
 
-  // 2. Initialize Blockly Workspace
+  // 2. Initialize Blockly and Handle Theme Changes
   useEffect(() => {
-    if (libsLoaded && containerRef.current && !workspaceRef.current && viewMode === 'blocks') {
+    if (libsLoaded && containerRef.current && window.Blockly) {
       
-      const CyberTheme = window.Blockly.Theme.defineTheme('cyber', {
+      // -- A. DEFINE THEMES (Canvas/SVG Colors) --
+      const themeColors = {
+        cyber: {
+          workspace: '#0a0c14',
+          flyout: '#0f1220',
+          blocks: {
+            logic: { primary: "#3b82f6", secondary: "#2563eb", tertiary: "#1d4ed8" },
+            loop: { primary: "#10b981", secondary: "#059669", tertiary: "#047857" },
+            math: { primary: "#8b5cf6", secondary: "#7c3aed", tertiary: "#6d28d9" },
+            text: { primary: "#f59e0b", secondary: "#d97706", tertiary: "#b45309" },
+            list: { primary: "#ec4899", secondary: "#db2777", tertiary: "#be185d" },
+            variable: { primary: "#f43f5e", secondary: "#e11d48", tertiary: "#be123c" },
+            procedure: { primary: "#06b6d4", secondary: "#0891b2", tertiary: "#0e7490" }
+          }
+        },
+        solaris: {
+          workspace: '#fdf6e3',
+          flyout: '#eee8d5',
+          blocks: {
+            logic: { primary: "#268bd2", secondary: "#2075c7", tertiary: "#1b60ad" },
+            loop: { primary: "#859900", secondary: "#718200", tertiary: "#5d6b00" },
+            math: { primary: "#6c71c4", secondary: "#6166b0", tertiary: "#565a9c" },
+            text: { primary: "#b58900", secondary: "#a17a00", tertiary: "#8d6b00" },
+            list: { primary: "#d33682", secondary: "#c12e75", tertiary: "#af2668" },
+            variable: { primary: "#dc322f", secondary: "#cb2926", tertiary: "#ba201d" },
+            procedure: { primary: "#2aa198", secondary: "#258f86", tertiary: "#207d74" }
+          }
+        }
+      };
+
+      const currentPalette = theme === 'cyber' ? themeColors.cyber : themeColors.solaris;
+      const themeName = `app-theme-${theme}`;
+
+      // Always define/overwrite the theme to ensure it matches current state
+      window.Blockly.Theme.defineTheme(themeName, {
         base: window.Blockly.Themes.Classic,
         componentStyles: {
-          workspaceBackgroundColour: '#0a0c14', 
-          toolboxBackgroundColour: '#0f1220', 
-          toolboxForegroundColour: '#b9c0cf',
-          flyoutBackgroundColour: '#0f1220',
+          workspaceBackgroundColour: currentPalette.workspace,
+          toolboxBackgroundColour: currentPalette.flyout,
+          toolboxForegroundColour: theme === 'cyber' ? '#b9c0cf' : '#586e75',
+          flyoutBackgroundColour: currentPalette.flyout,
           flyoutOpacity: 0.95,
-          scrollbarColour: '#6bf3ff',
+          scrollbarColour: theme === 'cyber' ? '#6bf3ff' : '#cb4b16',
           scrollbarOpacity: 0.2,
-          insertionMarkerColour: '#6bf3ff',
+          insertionMarkerColour: theme === 'cyber' ? '#6bf3ff' : '#cb4b16',
           insertionMarkerOpacity: 0.5,
         },
         fontStyle: {
@@ -117,146 +206,220 @@ export const BlockPyWrapper = forwardRef<BlockPyRef, BlockPyWrapperProps>(({
           size: 12
         },
         blockStyles: {
-          "logic_blocks": { "colourPrimary": "#3b82f6", "colourSecondary": "#2563eb", "colourTertiary": "#1d4ed8" }, 
-          "loop_blocks": { "colourPrimary": "#10b981", "colourSecondary": "#059669", "colourTertiary": "#047857" }, 
-          "math_blocks": { "colourPrimary": "#8b5cf6", "colourSecondary": "#7c3aed", "colourTertiary": "#6d28d9" }, 
-          "text_blocks": { "colourPrimary": "#f59e0b", "colourSecondary": "#d97706", "colourTertiary": "#b45309" }, 
-          "list_blocks": { "colourPrimary": "#ec4899", "colourSecondary": "#db2777", "colourTertiary": "#be185d" }, 
-          "variable_blocks": { "colourPrimary": "#f43f5e", "colourSecondary": "#e11d48", "colourTertiary": "#be123c" }, 
-          "procedure_blocks": { "colourPrimary": "#06b6d4", "colourSecondary": "#0891b2", "colourTertiary": "#0e7490" } 
+          "logic_blocks": { "colourPrimary": currentPalette.blocks.logic.primary, "colourSecondary": currentPalette.blocks.logic.secondary, "colourTertiary": currentPalette.blocks.logic.tertiary },
+          "loop_blocks": { "colourPrimary": currentPalette.blocks.loop.primary, "colourSecondary": currentPalette.blocks.loop.secondary, "colourTertiary": currentPalette.blocks.loop.tertiary },
+          "math_blocks": { "colourPrimary": currentPalette.blocks.math.primary, "colourSecondary": currentPalette.blocks.math.secondary, "colourTertiary": currentPalette.blocks.math.tertiary },
+          "text_blocks": { "colourPrimary": currentPalette.blocks.text.primary, "colourSecondary": currentPalette.blocks.text.secondary, "colourTertiary": currentPalette.blocks.text.tertiary },
+          "list_blocks": { "colourPrimary": currentPalette.blocks.list.primary, "colourSecondary": currentPalette.blocks.list.secondary, "colourTertiary": currentPalette.blocks.list.tertiary },
+          "variable_blocks": { "colourPrimary": currentPalette.blocks.variable.primary, "colourSecondary": currentPalette.blocks.variable.secondary, "colourTertiary": currentPalette.blocks.variable.tertiary },
+          "procedure_blocks": { "colourPrimary": currentPalette.blocks.procedure.primary, "colourSecondary": currentPalette.blocks.procedure.secondary, "colourTertiary": currentPalette.blocks.procedure.tertiary }
         }
       });
 
-      const style = document.createElement('style');
-      style.id = 'cyber-blockly-styles';
-      style.innerHTML = `
-        .blocklySvg { background-color: transparent !important; outline: none; }
-        .blocklyMainBackground { stroke: none !important; fill: none !important; }
-        .blocklyToolboxDiv { background-color: #0f1220 !important; border-right: 1px solid rgba(107, 243, 255, 0.15); box-shadow: 5px 0 15px rgba(0,0,0,0.5); }
-        .blocklyTreeRow { height: 44px !important; line-height: 44px !important; margin-bottom: 2px; border-left: 3px solid transparent; transition: all 0.2s ease; padding-left: 12px !important; }
-        .blocklyTreeRow:not(.blocklyTreeSelected):hover { background-color: rgba(107, 243, 255, 0.05) !important; border-left: 3px solid rgba(107, 243, 255, 0.3); }
-        .blocklyTreeSelected .blocklyTreeRow { background-color: rgba(107, 243, 255, 0.1) !important; border-left: 3px solid #6bf3ff !important; box-shadow: inset 15px 0 20px -10px rgba(107, 243, 255, 0.15); }
-        .blocklyTreeLabel { font-family: 'Orbitron', sans-serif !important; color: #94a3b8 !important; font-size: 11px !important; font-weight: 600 !important; text-transform: uppercase; letter-spacing: 1.5px; }
-        .blocklyTreeSelected .blocklyTreeLabel { color: #6bf3ff !important; text-shadow: 0 0 8px rgba(107, 243, 255, 0.6); }
+      // -- B. INJECT UI STYLES (DOM/CSS Transitions) --
+      const styleId = 'blockly-dynamic-styles';
+      let styleEl = document.getElementById(styleId);
+      if (!styleEl) {
+        styleEl = document.createElement('style');
+        styleEl.id = styleId;
+        document.head.appendChild(styleEl);
+      }
+
+      styleEl.innerHTML = `
+        .blocklySvg { 
+          background-color: transparent !important; 
+          outline: none; 
+          transition: background-color 0.3s ease-in-out;
+        }
+        
+        .blocklyMainBackground { 
+          stroke: none !important; 
+          fill: none !important; 
+        }
+        
+        /* TOOLBOX */
+        .blocklyToolboxDiv { 
+          background-color: var(--bg-panel) !important; 
+          border-right: 1px solid var(--border-color); 
+          box-shadow: 5px 0 15px rgba(0,0,0,0.1); 
+          transition: background-color 0.3s ease, border-color 0.3s ease;
+        }
+        
+        .blocklyTreeRow { 
+          height: 44px !important; 
+          line-height: 44px !important; 
+          margin-bottom: 2px; 
+          border-left: 3px solid transparent; 
+          padding-left: 12px !important; 
+          transition: all 0.2s ease-in-out !important;
+        }
+        
+        .blocklyTreeRow:not(.blocklyTreeSelected):hover { 
+          background-color: var(--border-color) !important; 
+          border-left: 3px solid var(--accent-primary); 
+          opacity: 0.8;
+        }
+        
+        .blocklyTreeSelected .blocklyTreeRow { 
+          background-color: var(--bg-surface) !important; 
+          border-left: 3px solid var(--accent-primary) !important; 
+        }
+        
+        .blocklyTreeLabel { 
+          font-family: 'Orbitron', sans-serif !important; 
+          color: var(--fg-secondary) !important; 
+          font-size: 11px !important; 
+          font-weight: 600 !important; 
+          text-transform: uppercase; 
+          letter-spacing: 1.5px; 
+          transition: color 0.3s ease;
+        }
+        
+        .blocklyTreeSelected .blocklyTreeLabel { 
+          color: var(--accent-primary) !important; 
+          text-shadow: 0 0 8px rgba(107, 243, 255, 0.2); 
+        }
+        
         .blocklyTreeIcon { visibility: hidden; width: 0 !important; }
-        .blocklyFlyoutBackground { fill: #0a0c14 !important; fill-opacity: 0.98 !important; stroke: #6bf3ff; stroke-width: 1px; stroke-opacity: 0.3; }
-        .blocklyScrollbarHandle { fill: #6bf3ff !important; fill-opacity: 0.2; stroke: #6bf3ff; stroke-width: 1; rx: 2; }
-        .blocklyScrollbarHandle:hover { fill-opacity: 0.5 !important; }
-        .cm-s-cyber { background: transparent; color: #e2e8f0; }
-      `;
-      if (!document.getElementById('cyber-blockly-styles')) {
-        document.head.appendChild(style);
-      }
+        
+        /* FLYOUT */
+        .blocklyFlyoutBackground { 
+          fill: var(--bg-panel) !important; 
+          fill-opacity: 0.98 !important; 
+          stroke: var(--accent-primary); 
+          stroke-width: 1px; 
+          stroke-opacity: 0.3; 
+          transition: fill 0.3s ease, stroke 0.3s ease;
+        }
 
-      const toolboxXML = `
-        <xml>
-          <category name="Logic" colour="#3b82f6">
-            <block type="controls_if"></block>
-            <block type="logic_compare"></block>
-            <block type="logic_operation"></block>
-            <block type="logic_negate"></block>
-            <block type="logic_boolean"></block>
-          </category>
-          <category name="Loops" colour="#10b981">
-            <block type="controls_repeat_ext">
-              <value name="TIMES"><shadow type="math_number"><field name="NUM">10</field></shadow></value>
-            </block>
-            <block type="controls_whileUntil"></block>
-            <block type="controls_for">
-              <value name="FROM"><shadow type="math_number"><field name="NUM">1</field></shadow></value>
-              <value name="TO"><shadow type="math_number"><field name="NUM">10</field></shadow></value>
-              <value name="BY"><shadow type="math_number"><field name="NUM">1</field></shadow></value>
-            </block>
-            <block type="controls_flow_statements"></block>
-          </category>
-          <category name="Math" colour="#8b5cf6">
-            <block type="math_number"><field name="NUM">123</field></block>
-            <block type="math_arithmetic"></block>
-            <block type="math_single"></block>
-            <block type="math_random_int"></block>
-          </category>
-          <category name="Text" colour="#f59e0b">
-            <block type="text"></block>
-            <block type="text_join"></block>
-            <block type="text_print"></block>
-            <block type="text_prompt_ext">
-               <value name="TEXT"><shadow type="text"><field name="TEXT">Prompt:</field></shadow></value>
-            </block>
-          </category>
-          <category name="Lists" colour="#ec4899">
-            <block type="lists_create_with"></block>
-            <block type="lists_getIndex"></block>
-            <block type="lists_length"></block>
-          </category>
-          <category name="Variables" colour="#f43f5e" custom="VARIABLE"></category>
-          <category name="Functions" colour="#06b6d4" custom="PROCEDURE"></category>
-        </xml>
+        .blocklyScrollbarHandle {
+          fill: var(--accent-primary) !important;
+          fill-opacity: 0.3 !important;
+          transition: fill 0.3s ease;
+        }
+        
+        /* SCROLLBARS */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
       `;
 
-      workspaceRef.current = window.Blockly.inject(containerRef.current, {
-        toolbox: toolboxXML,
-        scrollbars: true,
-        trashcan: true,
-        move: { scrollbars: true, drag: true, wheel: true },
-        theme: CyberTheme,
-        renderer: 'zelos'
-      });
+      // -- C. INITIALIZE OR UPDATE WORKSPACE --
+      if (!workspaceRef.current && viewMode === 'blocks') {
+        const toolboxXML = `
+          <xml>
+            <category name="Logic" colour="${currentPalette.blocks.logic.primary}">
+              <block type="controls_if"></block>
+              <block type="logic_compare"></block>
+              <block type="logic_operation"></block>
+              <block type="logic_negate"></block>
+              <block type="logic_boolean"></block>
+            </category>
+            <category name="Loops" colour="${currentPalette.blocks.loop.primary}">
+              <block type="controls_repeat_ext">
+                <value name="TIMES"><shadow type="math_number"><field name="NUM">10</field></shadow></value>
+              </block>
+              <block type="controls_whileUntil"></block>
+              <block type="controls_for">
+                <value name="FROM"><shadow type="math_number"><field name="NUM">1</field></shadow></value>
+                <value name="TO"><shadow type="math_number"><field name="NUM">10</field></shadow></value>
+                <value name="BY"><shadow type="math_number"><field name="NUM">1</field></shadow></value>
+              </block>
+              <block type="controls_flow_statements"></block>
+            </category>
+            <category name="Math" colour="${currentPalette.blocks.math.primary}">
+              <block type="math_number"><field name="NUM">123</field></block>
+              <block type="math_arithmetic"></block>
+              <block type="math_single"></block>
+              <block type="math_random_int"></block>
+            </category>
+            <category name="Text" colour="${currentPalette.blocks.text.primary}">
+              <block type="text"></block>
+              <block type="text_join"></block>
+              <block type="text_print"></block>
+              <block type="text_prompt_ext">
+                <value name="TEXT"><shadow type="text"><field name="TEXT">Prompt:</field></shadow></value>
+              </block>
+            </category>
+            <category name="Lists" colour="${currentPalette.blocks.list.primary}">
+              <block type="lists_create_with"></block>
+              <block type="lists_getIndex"></block>
+              <block type="lists_length"></block>
+            </category>
+            <category name="Variables" colour="${currentPalette.blocks.variable.primary}" custom="VARIABLE"></category>
+            <category name="Functions" colour="${currentPalette.blocks.procedure.primary}" custom="PROCEDURE"></category>
+          </xml>
+        `;
 
-      // Toggle Logic
-      const toolbox = workspaceRef.current.getToolbox();
-      let toolboxDiv = null;
-      if (toolbox) {
-        if (typeof toolbox.getDiv === 'function') toolboxDiv = toolbox.getDiv();
-        else if (typeof toolbox.getHtmlDiv === 'function') toolboxDiv = toolbox.getHtmlDiv();
-      }
-
-      if (toolboxDiv) {
-        toolboxDiv.addEventListener('click', (e: MouseEvent) => {
-          const target = e.target as HTMLElement;
-          const row = target.closest('.blocklyTreeRow');
-          if (row) {
-            const selectedItem = toolbox.getSelectedItem();
-            if (selectedItem) {
-               const contentContainer = row.closest('[role="treeitem"]');
-               const labelSpan = row.querySelector('.blocklyTreeLabel');
-               const categoryId = contentContainer?.getAttribute('aria-label') || labelSpan?.textContent || 'unknown';
-               
-               if (window.lastClickedCategory === categoryId && workspaceRef.current.getFlyout().isVisible()) {
-                 workspaceRef.current.getFlyout().hide();
-                 toolbox.clearSelection();
-                 window.lastClickedCategory = null;
-               } else {
-                 window.lastClickedCategory = categoryId;
-               }
-            }
-          }
+        workspaceRef.current = window.Blockly.inject(containerRef.current, {
+          toolbox: toolboxXML,
+          scrollbars: true,
+          trashcan: true,
+          move: { scrollbars: true, drag: true, wheel: true },
+          theme: themeName,
+          renderer: 'zelos'
         });
+
+        // Initialize listeners...
+        const toolbox = workspaceRef.current.getToolbox();
+        let toolboxDiv = null;
+        if (toolbox) {
+          if (typeof toolbox.getDiv === 'function') toolboxDiv = toolbox.getDiv();
+          else if (typeof toolbox.getHtmlDiv === 'function') toolboxDiv = toolbox.getHtmlDiv();
+        }
+
+        if (toolboxDiv) {
+          toolboxDiv.addEventListener('click', (e: MouseEvent) => {
+            const target = e.target as HTMLElement;
+            const row = target.closest('.blocklyTreeRow');
+            if (row) {
+              const selectedItem = toolbox.getSelectedItem();
+              if (selectedItem) {
+                const contentContainer = row.closest('[role="treeitem"]');
+                const labelSpan = row.querySelector('.blocklyTreeLabel');
+                const categoryId = contentContainer?.getAttribute('aria-label') || labelSpan?.textContent || 'unknown';
+                
+                if (window.lastClickedCategory === categoryId && workspaceRef.current.getFlyout().isVisible()) {
+                  workspaceRef.current.getFlyout().hide();
+                  toolbox.clearSelection();
+                  window.lastClickedCategory = null;
+                } else {
+                  window.lastClickedCategory = categoryId;
+                }
+              }
+            }
+          });
+        }
+
+        workspaceRef.current.addChangeListener(() => {
+          const generatedCode = window.Blockly.Python.workspaceToCode(workspaceRef.current);
+          setCode(generatedCode);
+          if(onCodeChange) onCodeChange(generatedCode);
+        });
+      } else if (workspaceRef.current) {
+        // Just update the theme if workspace exists
+        const themeObj = window.Blockly.registry.getObject(window.Blockly.registry.Type.THEME, themeName);
+        if (themeObj) {
+            workspaceRef.current.setTheme(themeObj);
+        }
       }
 
-      workspaceRef.current.addChangeListener(() => {
-        const generatedCode = window.Blockly.Python.workspaceToCode(workspaceRef.current);
-        setCode(generatedCode);
-        if(onCodeChange) onCodeChange(generatedCode);
-      });
       window.dispatchEvent(new Event('resize'));
     }
-  }, [libsLoaded, viewMode]);
+  }, [libsLoaded, viewMode, theme]);
 
-  // 3. Expose Methods to Parent (Run, Reset)
+  // 3. Expose Methods
   useImperativeHandle(ref, () => ({
     run: () => {
       if (!window.Sk) {
-        log('system', 'Error: Engine not loaded.');
         if(onError) onError("Python engine not loaded.");
         return;
       }
 
-      log('system', 'Configuring Skulpt sandbox...');
       window.Sk.configure({
         output: (text: string) => { if(onOutput) onOutput(text); },
         inputfun: (promptText: string) => {
           return new Promise((resolve) => {
-            log('system', `Waiting for user input: "${promptText}"`);
             const output = prompt(promptText || "Input required:");
             resolve(output || "");
           });
@@ -312,10 +475,10 @@ export const BlockPyWrapper = forwardRef<BlockPyRef, BlockPyWrapperProps>(({
 
   if (!libsLoaded) {
     return (
-      <div className="w-full h-full flex flex-col items-center justify-center text-cyan-500/50 animate-pulse font-mono tracking-widest text-sm bg-[#0a0c14]">
+      <div className="w-full h-full flex flex-col items-center justify-center text-[var(--accent-primary)] animate-pulse font-mono tracking-widest text-sm bg-[var(--bg-panel)]">
         <div className="mb-2">[ INITIALIZING KERNEL ]</div>
-        <div className="w-32 h-1 bg-cyan-900 rounded-full overflow-hidden">
-           <div className="h-full bg-cyan-500 animate-[width_1s_ease-in-out_infinite] w-1/2"></div>
+        <div className="w-32 h-1 bg-[var(--fg-secondary)] rounded-full overflow-hidden">
+           <div className="h-full bg-[var(--accent-primary)] animate-[width_1s_ease-in-out_infinite] w-1/2"></div>
         </div>
       </div>
     );
@@ -328,10 +491,10 @@ export const BlockPyWrapper = forwardRef<BlockPyRef, BlockPyWrapperProps>(({
         className={`w-full h-full absolute inset-0 transition-opacity duration-300 ${viewMode === 'blocks' ? 'opacity-100 z-10 pointer-events-auto' : 'opacity-0 z-0 pointer-events-none'}`} 
       />
 
-      <div className={`w-full h-full absolute inset-0 bg-[#0a0c14] flex flex-row transition-opacity duration-300 ${viewMode === 'text' ? 'opacity-100 z-10 pointer-events-auto' : 'opacity-0 z-0 pointer-events-none'}`}>
-        <div className="w-12 h-full bg-[#0f1220]/80 border-r border-white/5 pt-4 text-right pr-3 select-none">
+      <div className={`w-full h-full absolute inset-0 bg-[var(--bg-panel)] flex flex-row transition-opacity duration-300 ${viewMode === 'text' ? 'opacity-100 z-10 pointer-events-auto' : 'opacity-0 z-0 pointer-events-none'}`}>
+        <div className="w-12 h-full bg-[var(--bg-surface)] border-r border-[var(--border-color)] pt-4 text-right pr-3 select-none">
           {code.split('\n').map((_, i) => (
-             <div key={i} className="text-xs font-mono text-slate-600 leading-6">{i+1}</div>
+             <div key={i} className="text-xs font-mono text-[var(--fg-secondary)] leading-6">{i+1}</div>
           ))}
         </div>
         
@@ -340,7 +503,7 @@ export const BlockPyWrapper = forwardRef<BlockPyRef, BlockPyWrapperProps>(({
              ref={editorRef}
              value={code}
              onChange={handleTextChange}
-             className="w-full h-full bg-transparent text-slate-300 font-mono text-sm p-4 resize-none focus:outline-none leading-6 z-10 relative custom-scrollbar"
+             className="w-full h-full bg-transparent text-[var(--fg-primary)] font-mono text-sm p-4 resize-none focus:outline-none leading-6 z-10 relative custom-scrollbar"
              spellCheck={false}
            />
            <div className="absolute inset-0 pointer-events-none p-4 font-mono text-sm leading-6 z-0 whitespace-pre-wrap overflow-hidden text-transparent">
