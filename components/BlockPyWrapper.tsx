@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react';
 import { useTerminal } from '../context/TerminalContext';
 import { useTheme } from '../context/ThemeContext';
+import { useEditorContext } from '../context/EditorContext';
 
 // Global type augmentations
 declare global {
@@ -35,6 +36,7 @@ export const BlockPyWrapper = forwardRef<BlockPyRef, BlockPyWrapperProps>(({
 }, ref) => {
   const { log } = useTerminal();
   const { theme } = useTheme(); 
+  const { setCode: setGlobalCode, setLastError } = useEditorContext();
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const workspaceRef = useRef<any>(null);
@@ -42,16 +44,30 @@ export const BlockPyWrapper = forwardRef<BlockPyRef, BlockPyWrapperProps>(({
   const [libsLoaded, setLibsLoaded] = useState(false);
   const [code, setCode] = useState(initialCode);
 
-  // 1. Optimized Parallel Loading with Deduping
+  // Sync initial code to context
   useEffect(() => {
+    setGlobalCode(initialCode);
+  }, []);
+
+  // 1. Optimized Parallel Loading with Deduping & Error Suppression
+  useEffect(() => {
+    // Suppress specific Blockly HMR error
+    const handleGlobalError = (event: ErrorEvent) => {
+      if (event.message?.includes('Extension "contextMenu_variableDynamicSetterGetter" is already registered')) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        console.warn("[BlockPy] Suppressed duplicate Blockly extension error (safe to ignore).");
+        return true;
+      }
+    };
+    window.addEventListener('error', handleGlobalError);
+
     // If libraries are already fully loaded and available in global scope
     if (window.Blockly && window.Sk && window.Blockly.Blocks) {
       setLibsLoaded(true);
-      return;
+      return () => window.removeEventListener('error', handleGlobalError);
     }
 
-    // Deduping helper to prevent double-injection in React StrictMode or HMR
-    // Uses element IDs for absolute certainty
     const loadScript = (src: string, id: string) => {
       // Initialize global script registry if not present
       if (!window.__loadedScripts) window.__loadedScripts = new Set();
@@ -68,8 +84,8 @@ export const BlockPyWrapper = forwardRef<BlockPyRef, BlockPyWrapperProps>(({
             return;
         }
 
-        // 2. Check DOM by ID (Source of Truth)
-        if (document.getElementById(id)) {
+        // 2. Check DOM by ID or SRC (Source of Truth)
+        if (document.getElementById(id) || document.querySelector(`script[src="${src}"]`)) {
           window.__loadedScripts?.add(src); // Sync registry
           const globalKey = `__promise_script_${src}`;
           if ((window as any)[globalKey]) {
@@ -147,6 +163,8 @@ export const BlockPyWrapper = forwardRef<BlockPyRef, BlockPyWrapperProps>(({
              if(onError) onError("System Error: Failed to load execution engine.");
         }
       });
+      
+      return () => window.removeEventListener('error', handleGlobalError);
   }, []);
 
   // 2. Initialize Blockly and Handle Theme Changes
@@ -394,6 +412,7 @@ export const BlockPyWrapper = forwardRef<BlockPyRef, BlockPyWrapperProps>(({
         workspaceRef.current.addChangeListener(() => {
           const generatedCode = window.Blockly.Python.workspaceToCode(workspaceRef.current);
           setCode(generatedCode);
+          setGlobalCode(generatedCode); // Sync to global context
           if(onCodeChange) onCodeChange(generatedCode);
         });
       } else if (workspaceRef.current) {
@@ -411,6 +430,9 @@ export const BlockPyWrapper = forwardRef<BlockPyRef, BlockPyWrapperProps>(({
   // 3. Expose Methods
   useImperativeHandle(ref, () => ({
     run: () => {
+      // Clear previous errors on new run
+      setLastError(null);
+
       if (!window.Sk) {
         if(onError) onError("Python engine not loaded.");
         return;
@@ -449,8 +471,10 @@ export const BlockPyWrapper = forwardRef<BlockPyRef, BlockPyWrapperProps>(({
           if(onOutput) onOutput(`\n>> Finished (${execTime}ms).`); 
         },
         (err: any) => { 
-           log('system', `Runtime Error: ${err.toString()}`);
-           if(onError) onError(err.toString()); 
+           const errorMsg = err.toString();
+           log('system', `Runtime Error: ${errorMsg}`);
+           setLastError(errorMsg); // Sync error to global context
+           if(onError) onError(errorMsg); 
         }
       );
     },
@@ -458,6 +482,8 @@ export const BlockPyWrapper = forwardRef<BlockPyRef, BlockPyWrapperProps>(({
     reset: () => {
       if (workspaceRef.current) workspaceRef.current.clear();
       setCode('');
+      setGlobalCode('');
+      setLastError(null);
       log('system', 'Workspace reset.');
     }
   }));
@@ -469,8 +495,10 @@ export const BlockPyWrapper = forwardRef<BlockPyRef, BlockPyWrapperProps>(({
   }, [viewMode]);
 
   const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setCode(e.target.value);
-    if(onCodeChange) onCodeChange(e.target.value);
+    const val = e.target.value;
+    setCode(val);
+    setGlobalCode(val); // Sync to global context
+    if(onCodeChange) onCodeChange(val);
   };
 
   if (!libsLoaded) {

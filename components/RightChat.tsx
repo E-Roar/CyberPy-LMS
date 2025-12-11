@@ -5,11 +5,16 @@ import {
   Bot, 
   MoreHorizontal,
   Lightbulb,
-  Sparkles
+  Sparkles,
+  Bug,
+  BookOpen
 } from 'lucide-react';
 import { ChatMessage } from '../types';
 import { HudCard } from './UI';
 import { useTerminal } from '../context/TerminalContext';
+import { useEditorContext } from '../context/EditorContext';
+import { Live2DAvatar, Live2DAvatarRef } from './Live2DAvatar';
+import { GoogleGenAI } from "@google/genai";
 
 export const RightChat: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -18,9 +23,11 @@ export const RightChat: React.FC = () => {
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const avatarRef = useRef<Live2DAvatarRef>(null);
   
-  // Terminal Context to push "Thinking" logs
+  // Consuming Contexts
   const { log, toggleTerminal, showAI } = useTerminal();
+  const { code, lastError } = useEditorContext();
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -28,26 +35,51 @@ export const RightChat: React.FC = () => {
 
   useEffect(scrollToBottom, [messages]);
 
-  const simulateThinking = async () => {
-    if (!showAI) toggleTerminal('ai');
+  // Initialize Gemini
+  const generateResponse = async (userPrompt: string, taskContext?: string) => {
+    try {
+      if (!process.env.API_KEY) {
+        throw new Error("API_KEY not configured");
+      }
 
-    const steps = [
-      "Analyzing user query vector...",
-      "Querying Knowledge Graph (Code_Patterns_v4)...",
-      "Context retrieved: 'Python Loops & Indentation'",
-      "Formulating pedagogical response...",
-      "Sanitizing output..."
-    ];
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      
+      // Construct context-aware prompt
+      const fullContext = `
+${taskContext ? `TASK: ${taskContext}` : ''}
 
-    for (const step of steps) {
-      log('ai', step);
-      await new Promise(r => setTimeout(r, 200 + Math.random() * 300));
+CONTEXT DATA:
+[Current Python Code]:
+\`\`\`python
+${code || "# No code written yet"}
+\`\`\`
+
+[Last Execution Error]:
+${lastError ? lastError : "No recent errors"}
+
+USER QUERY:
+${userPrompt}
+`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: fullContext,
+        config: {
+          systemInstruction: "You are CyberCore, a futuristic AI Tutor for a Python learning platform. Your persona is helpful, encouraging, and uses mild sci-fi/cyberpunk terminology (refer to user as 'Cadet'). Keep answers concise, pedagogical, and safe for K-12 students. Never give the direct answer immediately; provide hints and guide the Cadet. If there is an error in the logs, prioritize explaining it. Formatting: Use Markdown.",
+        },
+      });
+
+      return response.text;
+    } catch (error: any) {
+      console.error("GenAI Error:", error);
+      return `[SYSTEM ERROR]: Neural Link unstable. ${error.message || "Check API Key configuration."}`;
     }
   };
 
-  const handleSend = async (text: string = input) => {
+  const handleSend = async (text: string = input, contextOverride?: string) => {
     if (!text.trim()) return;
 
+    // 1. Add User Message
     const newMessage: ChatMessage = {
       id: Date.now(),
       sender: 'user',
@@ -59,25 +91,63 @@ export const RightChat: React.FC = () => {
     setInput('');
     setIsTyping(true);
     
-    await simulateThinking();
+    // Set Avatar Mood to Thinking
+    avatarRef.current?.setMood('thinking');
+    
+    // Ensure AI terminal is open for "Thinking" effect if preferred, or just rely on UI
+    if (!showAI) toggleTerminal('ai');
+    log('ai', `Processing query: "${text.substring(0, 20)}..."`);
 
-    setTimeout(() => {
+    // 2. Call Gemini API
+    const responseText = await generateResponse(text, contextOverride);
+    
+    // 3. Add Bot Message
+    if (responseText) {
+      // Check for errors in response to set mood
+      const isError = responseText.includes("[SYSTEM ERROR]");
+      avatarRef.current?.setMood(isError ? 'error' : 'happy');
+
       setMessages(prev => [...prev, {
         id: Date.now() + 1,
         sender: 'bot',
-        text: "I've analyzed your logic. The loop range seems correct, but verify the indentation on line 4.",
+        text: responseText,
         timestamp: new Date()
       }]);
-      setIsTyping(false);
-      log('ai', "Response delivered.");
-    }, 500);
+      
+      log('ai', "Response generated.");
+      
+      // 4. Trigger Avatar Speech
+      // Simple regex to remove code blocks for speech to avoid reading python syntax out loud clumsily
+      const cleanSpeech = responseText.replace(/```[\s\S]*?```/g, "code block").replace(/[*_#]/g, "");
+      avatarRef.current?.speak(cleanSpeech.substring(0, 200)); 
+      
+      // Reset mood after speech ends (handled inside Live2DAvatar onEnd, but backup here)
+      setTimeout(() => {
+          if(!isError) avatarRef.current?.setMood('neutral');
+      }, 5000);
+
+    } else {
+        setIsTyping(false);
+        avatarRef.current?.setMood('neutral');
+    }
+    
+    setIsTyping(false);
   };
 
-  const QuickPrompt = ({ text }: { text: string }) => (
+  const handleFixIt = () => {
+    handleSend("Please find and fix the bugs in my code, explaining what went wrong.", "DEBUGGING MODE");
+  };
+
+  const handleExplain = () => {
+    handleSend("Explain the current code logic line-by-line in simple terms.", "EXPLANATION MODE");
+  };
+
+  const QuickPrompt = ({ text, onClick, icon: Icon }: { text: string, onClick: () => void, icon?: any }) => (
     <button 
-      onClick={() => handleSend(text)}
-      className="text-xs bg-[var(--accent-primary)]/10 border border-[var(--accent-primary)]/20 text-[var(--accent-primary)] px-3 py-1.5 rounded-full hover:bg-[var(--accent-primary)]/20 transition-colors whitespace-nowrap"
+      onClick={onClick}
+      className="flex items-center gap-2 text-xs bg-[var(--accent-primary)]/10 border border-[var(--accent-primary)]/20 text-[var(--accent-primary)] px-3 py-1.5 rounded-full hover:bg-[var(--accent-primary)]/20 transition-colors whitespace-nowrap"
     >
+      {Icon && <Icon size={12} />}
       {text}
     </button>
   );
@@ -92,38 +162,30 @@ export const RightChat: React.FC = () => {
               style={{ backgroundImage: 'linear-gradient(var(--accent-primary) 1px, transparent 1px), linear-gradient(90deg, var(--accent-primary) 1px, transparent 1px)', backgroundSize: '40px 40px' }}>
          </div>
          
-         {/* Simulated 3D/Holographic Avatar */}
-         <div className="relative z-10 w-48 h-48 flex items-center justify-center">
-            {/* Hologram Rings */}
-            <div className={`absolute inset-0 border-2 border-[var(--accent-primary)] opacity-30 rounded-full animate-[spin_10s_linear_infinite]`}></div>
-            <div className={`absolute inset-4 border border-[var(--accent-secondary)] opacity-30 rounded-full animate-[spin_15s_linear_infinite_reverse]`}></div>
-            
-            {/* The Avatar Image */}
-            <div className="w-32 h-32 rounded-full overflow-hidden border-2 border-[var(--border-color)] shadow-[0_0_30px_rgba(var(--accent-primary),0.3)] relative">
-               <img src="https://picsum.photos/300/300?grayscale" className="w-full h-full object-cover mix-blend-luminosity opacity-80" alt="AI Avatar" />
-               <div className="absolute inset-0 bg-gradient-to-t from-[var(--bg-app)] to-transparent mix-blend-overlay"></div>
-               
-               {isTyping && (
-                 <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-8 h-4 flex items-center justify-center gap-1">
-                   <div className="w-1 h-1 bg-[var(--accent-primary)] rounded-full animate-bounce"></div>
-                   <div className="w-1 h-1 bg-[var(--accent-primary)] rounded-full animate-bounce delay-100"></div>
-                   <div className="w-1 h-1 bg-[var(--accent-primary)] rounded-full animate-bounce delay-200"></div>
-                 </div>
-               )}
-            </div>
-            
-            {/* Status Indicator */}
-            <div className="absolute bottom-0 bg-[var(--bg-panel)]/80 backdrop-blur border border-[var(--border-color)] px-3 py-1 rounded-full text-[10px] text-[var(--accent-primary)] tracking-widest font-bold uppercase">
-              System Online
+         {/* Live2D Avatar Area */}
+         <div className="relative z-10 w-full h-full flex items-center justify-center">
+             {/* Holographic Base Ring */}
+             <div className="absolute bottom-4 w-32 h-8 border border-[var(--accent-primary)] rounded-[100%] opacity-30 animate-pulse bg-[var(--accent-primary)]/10 blur-[1px]"></div>
+             
+             {/* The Component */}
+             <div className="w-full h-full relative z-20">
+                <Live2DAvatar 
+                   ref={avatarRef}
+                />
+             </div>
+             
+             {/* Status Indicator */}
+             <div className="absolute bottom-2 bg-[var(--bg-panel)]/80 backdrop-blur border border-[var(--border-color)] px-3 py-1 rounded-full text-[10px] text-[var(--accent-primary)] tracking-widest font-bold uppercase z-30 pointer-events-none">
+              CyberCore AI
             </div>
          </div>
       </div>
 
       {/* Quick Actions / Prompts */}
       <div className="p-3 flex gap-2 overflow-x-auto custom-scrollbar border-b border-[var(--border-color)] bg-[var(--bg-surface)]">
-        <QuickPrompt text="Hint please" />
-        <QuickPrompt text="Debug this" />
-        <QuickPrompt text="Explain loop" />
+        <QuickPrompt text="Hint" icon={Lightbulb} onClick={() => handleSend("Give me a hint for the next step.")} />
+        <QuickPrompt text="Fix It" icon={Bug} onClick={handleFixIt} />
+        <QuickPrompt text="Explain" icon={BookOpen} onClick={handleExplain} />
       </div>
 
       {/* Chat Stream */}
@@ -136,7 +198,18 @@ export const RightChat: React.FC = () => {
                 ? 'bg-[var(--accent-primary)]/10 text-[var(--fg-primary)] border border-[var(--accent-primary)]/30 rounded-tr-sm' 
                 : 'bg-[var(--bg-panel)] text-[var(--fg-secondary)] border border-[var(--border-color)] rounded-tl-sm'}
             `}>
-              {msg.text}
+              {/* Simple Markdown Rendering (Basic) */}
+              <div className="whitespace-pre-wrap font-sans">
+                {msg.text.split('```').map((part, i) => 
+                  i % 2 === 1 ? (
+                    <div key={i} className="bg-black/30 p-2 rounded my-1 font-mono text-xs text-yellow-300 overflow-x-auto border border-white/5">
+                      {part.replace(/^python\n/, '')}
+                    </div>
+                  ) : (
+                    <span key={i}>{part}</span>
+                  )
+                )}
+              </div>
               <div className={`absolute top-0 w-2 h-2 border-t ${msg.sender === 'user' ? '-right-[1px] border-r border-[var(--accent-primary)]/30' : '-left-[1px] border-l border-[var(--border-color)]'}`}></div>
             </div>
             <span className="text-[10px] text-[var(--fg-secondary)] mt-1 px-1">
@@ -147,7 +220,7 @@ export const RightChat: React.FC = () => {
         {isTyping && (
            <div className="flex items-center gap-2 text-xs text-[var(--accent-primary)]/50 pl-2">
              <Bot size={12} className="animate-pulse" />
-             <span>Processing...</span>
+             <span>Neural processing...</span>
            </div>
         )}
         <div ref={messagesEndRef} />
@@ -161,7 +234,7 @@ export const RightChat: React.FC = () => {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-            placeholder="Ask AI Tutor..."
+            placeholder="Ask CyberCore..."
             className="w-full bg-[var(--bg-panel)] border border-[var(--border-color)] rounded-xl pl-4 pr-24 py-3 text-sm text-[var(--fg-primary)] placeholder-[var(--fg-secondary)] focus:outline-none focus:border-[var(--accent-primary)] focus:ring-1 focus:ring-[var(--accent-primary)]/20 transition-all"
           />
           <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">

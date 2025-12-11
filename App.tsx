@@ -7,6 +7,7 @@ import { Menu, MessageSquare } from 'lucide-react';
 import { TerminalProvider } from './context/TerminalContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider } from './context/AuthContext';
+import { EditorProvider } from './context/EditorContext';
 
 const AppContent: React.FC = () => {
   const [activeSection, setActiveSection] = useState<AppSection>(AppSection.DASHBOARD);
@@ -93,7 +94,9 @@ const App: React.FC = () => {
     <AuthProvider>
       <ThemeProvider>
         <TerminalProvider>
-          <AppContent />
+          <EditorProvider>
+            <AppContent />
+          </EditorProvider>
         </TerminalProvider>
       </ThemeProvider>
     </AuthProvider>
